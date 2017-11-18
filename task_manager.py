@@ -1,5 +1,6 @@
 from datetime import datetime as dt, timedelta as td
 from shutil import copyfile
+import numpy as np
 import operator
 
 seconds_per_minute = 60
@@ -93,7 +94,7 @@ def get_time(request):
 			return dt.strptime(time,"%Y-%m-%d %H:%M")
 		except ValueError:
 			# Report to the user that the string couldn't be parsed
-			print("Sorry, that time you entered could not be interpreted as such. PLease use the format [Y-m-d H:M] and try again: ")
+			print("Sorry, that time you entered could not be interpreted as such. Please use the format [Y-m-d H:M] and try again: ")
 
 ########################################################
 # Blank out a file
@@ -223,24 +224,33 @@ def sort_by_priority(task_list):
 	# Initialise the totals to zero
 	total_deadline_weight = 0
 	total_hours_spent = 0
+	total_time_weight = 0
 	for task in task_list:
 		# Get the weighting to account for the time until the deadline
 		# This will be normalised by total_deadline_weight later
-		task.deadline_weight = abs(int(task.time_remaining().seconds))
+		task.deadline_weight = np.exp(-abs(task.time_remaining().days+task.time_remaining().seconds*days_per_second))
+		print(task.deadline_weight)
 		total_deadline_weight += task.deadline_weight
 		
 		# Add up the number of hours spent so far
 		total_hours_spent += task.hours_spent
 
 	for task in task_list:
+		# Calculate the weight to account for time spent
+		task.time_weight = 1 + abs((task.hours_spent+1)/(total_hours_spent+1)-param[0])
+
+		# Get normalising factor
+		total_time_weight += task.time_weight
+
+	for task in task_list:
 		# Normalise the deadline weight
 		task.deadline_weight /= total_deadline_weight
 	
-		# Calculate the weight to account for time spent
-		task.time_weight = 1 + abs((task.hours_spent+1)/(total_hours_spent+1)-param[0])
+		# Normalise the time weight
+		task.time_weight /= total_time_weight
 	
 		# Weight the weights
-		task.priority = task.deadline_weight*param[1] + task.time_weight*param[2]
+		task.priority = task.deadline_weight*param[1] + task.time_weight*(1-param[1])
 		
 
 	return sorted(task_list, key=operator.attrgetter('priority'), reverse = True)
@@ -278,7 +288,7 @@ while True:
 		# Print out the top 5
 		print("Name			Priority	Time until deadline")
 		for task in unfinished_tasks[:5]:
-			print(task.name+":		"+str(round(task.priority,3))+"		"+str(round(task.time_remaining().days+task.time_remaining().seconds*days_per_second,2))+" days")
+			print(task.name+":		"+str(round(100*task.priority))+"%		"+str(round(task.time_remaining().days+task.time_remaining().seconds*days_per_second,2))+" days")
 	# Create a new task
 	elif option == "1":
 		new_task = Task.make_task()
