@@ -76,8 +76,14 @@ class Task:
 		return shedule_task(name, hours_spent, start_time, deadline, finish_time, finished)
 
 	def time_remaining(self):
-		# How much time remains for this task; or negative if we have exceeded the deadline
-		return self.deadline - dt.now()
+		# How many days remain for this task; or negative if we have exceeded the deadline
+		time_rem = self.deadline - dt.now()
+		return time_rem.days + time_rem.seconds*days_per_second
+
+	def time_elapsed(self):
+		# How many days has this task been around?
+		time_el = dt.now() - self.start_time
+		return time_el.days + time_el.seconds*days_per_second
 
 	def finish_task(self):
 		# We have finished the task
@@ -176,7 +182,7 @@ def get_timedelta(request):
 			time_interval = float(input(request))
 
 			# Check it is positive
-			assert(time_interval >= 0)				
+			assert(time_interval > 0)				
 
 			# Return the interval as a timedelta
 			return td(time_interval)
@@ -386,43 +392,67 @@ def sort_by_priority(task_list):
 
 	# Read in the parameters
 	param_str = config_file.read().split(",")
-	param = list(map(float,param_str))
-
+	
 	# Convert the parameters to floating point
+	param = list(map(float,param_str))
 
 	# Close the configuration file
 	config_file.close()
 
 	# Initialise the totals to zero
-	total_deadline_weight = 0
-	total_hours_spent = 0
-	total_time_weight = 0
+	total_deadline_weight = total_frac_time = total_hours_spent = total_time_weight = total_time_elapsed = total_util_weight = 0
+
+	# Find the next deadline
+	next_deadline = task_list[0].time_remaining()
+	next_task = task_list[0]
 	for task in task_list:
-		# Get the weighting to account for the time until the deadline
-		# This will be normalised by total_deadline_weight later
-		task.deadline_weight = np.exp(-abs(task.time_remaining().days+task.time_remaining().seconds*days_per_second))
+		if task.time_remaining() < next_deadline:
+			next_deadline = task.time_remaining()
+			next_task = task
+
+	# Find the deadline weight
+	for task in task_list:
+		task.deadline_weight = np.exp(-param[0]*abs(task.time_remaining()/next_deadline))
 		total_deadline_weight += task.deadline_weight
-		
-		# Add up the number of hours spent so far
-		total_hours_spent += task.hours_spent
-
+	# Normalise the deadline weight
 	for task in task_list:
-		# Calculate the weight to account for time spent
-		task.time_weight = 1 + abs((task.hours_spent+1)/(total_hours_spent+1)-param[0])
-
-		# Get normalising factor
-		total_time_weight += task.time_weight
-
-	for task in task_list:
-		# Normalise the deadline weight
 		task.deadline_weight /= total_deadline_weight
-	
-		# Normalise the time weight
+
+	# Get the fraction of the time until the next deadline that ought to be spent on this task
+	if next_deadline < 0:
+		for task in task_list:
+			task.frac_time = 0
+
+		next_task.frac_time = 1
+	else:
+		for task in task_list:
+			task.frac_time = next_deadline / task.time_remaining()
+			total_frac_time += task.frac_time
+		for task in task_list:
+			task.frac_time /= total_frac_time
+
+	# Find the fraction-time-spent weight:
+	for task in task_list:
+		total_hours_spent += task.hours_spent
+	for task in task_list:
+		task.time_weight = task.frac_time - (task.hours_spent+param[1])/(total_hours_spent+param[2])
+		if task.time_weight < 0:
+			task.time_weight = 0
+		total_time_weight += task.time_weight
+	for task in task_list:
 		task.time_weight /= total_time_weight
-	
-		# Weight the weights
-		task.priority = task.deadline_weight*param[1] + task.time_weight*(1-param[1])
+
+	# Find the time utilisation weight:
+	for task in task_list:
+		task.util_weight = ( task.hours_spent + param[3] ) / ( hours_per_day*task.time_elapsed() )
+		total_util_weight += task.util_weight
+	for task in task_list:
+		task.util_weight /= total_util_weight
 		
+	
+	# Weight the weights
+	for task in task_list:
+		task.priority = task.deadline_weight*param[4] + task.time_weight*param[5] + task.util_weight*(1-param[4]-param[5])
 
 	return sorted(task_list, key=operator.attrgetter('priority'), reverse = True)
 		
@@ -450,6 +480,7 @@ while True:
 	print("1:		Create a new task")
 	print("2:		Complete a task")
 	print("3:		Create a new task roster")
+	print("4:		Record an hour of a task")
 	print("Anything else:	Exit")
 	option = input("Please enter your choice: ")
 	print("")
@@ -464,7 +495,7 @@ while True:
 		# Print out the top 5
 		print("Name			Priority	Time until deadline")
 		for task in unfinished_tasks[:5]:
-			print(task.name+":		"+str(round(100*task.priority))+"%		"+str(round(task.time_remaining().days+task.time_remaining().seconds*days_per_second,2))+" days")
+			print(task.name+":		"+str(round(100*task.priority))+"%		"+str(round(task.time_remaining(),2))+" days")
 	# Create a new task
 	elif option == "1":
 		new_task = Task.make_task()
@@ -473,11 +504,11 @@ while True:
 	# Complete a task
 	elif option == "2":
 		# Display the unfinished tasks for the user to choose from
-		print("These are the unfinished taks:")
+		print("These are the unfinished tasks:")
 		task_id = 0
 		print("Name			Time until deadline	ID")
 		for task in unfinished_tasks:
-			print(task.name+":		"+str(round(task.time_remaining().days+task.time_remaining().seconds*days_per_second,2))+" days		"+str(task_id))
+			print(task.name+":		"+str(round(task.time_remaining(),2))+" days		"+str(task_id))
 			task_id += 1
 		# Get the user's choice and mark the task as complete
 		while True:
@@ -500,6 +531,32 @@ while True:
 		new_roster = Roster.make_roster()
 		roster_list.append(new_roster)
 		print("The task roster has been successfully created!")
+	# Complete an hour of a task
+	# Complete a task
+	elif option == "4":
+		# Display the unfinished tasks for the user to choose from
+		print("These are the unfinished tasks:")
+		task_id = 0
+		print("Name			Time until deadline	ID")
+		for task in unfinished_tasks:
+			print(task.name+":		"+str(round(task.time_remaining(),2))+" days		"+str(task_id))
+			task_id += 1
+		# Get the user's choice and increment the hours-worked counter
+		while True:
+			try:
+				task_id = input("Please input the ID of the task you are working an hour on, or [N] to cancel: ")
+
+				# Allow the option to cancel
+				if task_id == "N":
+					break
+
+				# Otherwise check the ID is valid and if so mark the task as finished
+				task_id = int(task_id)
+				assert(task_id >= 0 and task_id < len(unfinished_tasks))
+				unfinished_tasks[task_id].hours_spent += 1
+				break
+			except:
+				print("Sorry, that task ID is not valid. Please try again: ")
 	else:
 		break
                                                                      
