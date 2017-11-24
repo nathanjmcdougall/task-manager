@@ -73,7 +73,7 @@ class Task:
 		deadline = get_time("Please enter the deadline for the new task: ")
 
 		# Give back the task
-		return shedule_task(name, hours_spent, start_time, deadline, finish_time, finished)
+		return Task.schedule_task(name, start_time, deadline)
 
 	def time_remaining(self):
 		# How many days remain for this task; or negative if we have exceeded the deadline
